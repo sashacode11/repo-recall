@@ -96,3 +96,26 @@ export interface ScoreResponse {
   feedback: string
   modelAnswer: string
 }
+
+// ---- Voice mode and follow-ups (mock interview) ----
+
+export interface TranscribeResponse {
+  transcript: string
+  /** False when the recording had no intelligible speech. */
+  speechDetected: boolean
+}
+
+export interface FollowUpRequest {
+  question: string
+  answer: string
+  missing: string[]
+  feedback: string
+  jobContext: string
+  /** Follow-ups already asked on this question, in order, so the next one digs somewhere new. */
+  previous?: { question: string; answer: string }[]
+}
+
+export interface FollowUpResponse {
+  question: string
+  expectedPoints: string[]
+}

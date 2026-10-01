@@ -2,10 +2,11 @@
 // Textarea with optional voice input. The mic button only appears when the browser supports
 // SpeechRecognition; typing always works.
 const model = defineModel<string>({ required: true })
-const props = withDefaults(defineProps<{ disabled?: boolean; placeholder?: string; rows?: number }>(), {
-  placeholder: 'Type your answer, or use the mic.',
-  rows: 7,
-})
+const props = withDefaults(
+  // speech: offer browser dictation. The mock interview turns it off; its voice mode uses Gemini transcription.
+  defineProps<{ disabled?: boolean; placeholder?: string; rows?: number; speech?: boolean }>(),
+  { placeholder: 'Type your answer, or use the mic.', rows: 7, speech: true },
+)
 const emit = defineEmits<{ submit: [] }>()
 
 const supported = ref(false)
@@ -18,7 +19,7 @@ let finals = ''
 
 onMounted(() => {
   const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-  if (!SR) return
+  if (!SR || !props.speech) return
   supported.value = true
   recognition = new SR()
   recognition.continuous = true

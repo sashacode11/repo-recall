@@ -4,9 +4,14 @@ if (!session.value) await navigateTo('/', { replace: true })
 
 const attempt = computed(() => session.value?.mock ?? null)
 const answers = computed(() => attempt.value?.questions.map((q) => ({ q, rec: attempt.value!.answers[q.id] })) ?? [])
-const pending = computed(() => answers.value.filter((a) => a.rec && !a.rec.result && !a.rec.error).length)
-const failed = computed(() => answers.value.filter((a) => a.rec?.error))
-const complete = computed(() => !!attempt.value?.finishedAt && pending.value === 0 && failed.value.length === 0)
+// Every answer, follow-ups included, for scoring status. The interview score itself counts main questions only.
+const responses = computed(() => (attempt.value ? allResponses(attempt.value).map((r) => r.response) : []))
+const pending = computed(() => responses.value.filter((r) => !r.result && !r.error).length)
+const failed = computed(() => responses.value.filter((r) => r.error))
+const retryable = computed(() => failed.value.some((r) => r.answer.trim()))
+const followUpCount = computed(() => answers.value.reduce((n, a) => n + (a.rec?.followUps?.filter((f) => f.response).length ?? 0), 0))
+// Untranscribed recordings can't be retried, so they don't block saving.
+const complete = computed(() => !!attempt.value?.finishedAt && pending.value === 0 && !retryable.value)
 const leftTabCount = computed(() => answers.value.filter((a) => a.rec?.leftTab).length)
 const gap = computed(() => (studyAvg.value != null && mockAvg.value != null ? studyAvg.value - mockAvg.value : null))
 
@@ -79,7 +84,9 @@ function startOver() {
       <div class="rounded-md border border-neutral-800 p-3">
         <p class="label">Interview</p>
         <p class="text-2xl font-semibold tabular-nums" :class="scoreColor(mockAvg)">{{ fmtScore(mockAvg) }}</p>
-        <p class="text-xs text-neutral-500">{{ answers.filter((a) => a.rec?.result).length }} scored</p>
+        <p class="text-xs text-neutral-500">
+          {{ answers.filter((a) => a.rec?.result).length }} scored<template v-if="followUpCount"> · {{ followUpCount }} follow-up{{ followUpCount === 1 ? '' : 's' }}</template>
+        </p>
       </div>
       <div class="rounded-md border border-neutral-800 p-3">
         <p class="label">Gap</p>
@@ -101,8 +108,8 @@ function startOver() {
 
     <div v-if="pending" class="muted text-sm">Scoring interview answers… {{ pending }} left.</div>
     <div v-if="failed.length && !pending" class="error flex items-center justify-between gap-4">
-      <span>{{ failed.length }} answer{{ failed.length === 1 ? '' : 's' }} couldn't be scored: {{ failed[0]!.rec!.error }}</span>
-      <button class="btn-ghost shrink-0" @click="retryFailedMock()">Retry</button>
+      <span>{{ failed.length }} answer{{ failed.length === 1 ? '' : 's' }} couldn't be scored: {{ failed[0]!.error }}</span>
+      <button v-if="retryable" class="btn-ghost shrink-0" @click="retryFailedMock()">Retry</button>
     </div>
     <p v-if="leftTabCount" class="text-sm text-amber-200">
       You left the tab during {{ leftTabCount }} question{{ leftTabCount === 1 ? '' : 's' }}; those are marked below.
@@ -150,7 +157,7 @@ function startOver() {
         <p class="text-xs text-neutral-500">
           {{ i + 1 }}. {{ topicById.get(q.topicId)?.topic }} · {{ q.difficulty }}
           <template v-if="rec">
-            · {{ rec.secondsUsed }}s
+            · {{ rec.secondsUsed }}s<template v-if="rec.via === 'voice'"> · spoken</template>
             <span v-if="rec.timedOut" class="text-amber-200"> · timed out</span>
             <span v-if="rec.leftTab" class="text-amber-200"> · left the tab</span>
           </template>
@@ -161,6 +168,25 @@ function startOver() {
           <ScoreCard v-if="rec.result" :result="rec.result" />
           <p v-else-if="rec.error" class="text-sm text-red-300">Not scored: {{ rec.error }}</p>
           <p v-else class="muted text-sm">Scoring…</p>
+
+          <div v-for="(f, fi) in rec.followUps ?? []" :key="fi" class="ml-4 space-y-3 border-l-2 border-neutral-800 pl-4">
+            <p class="text-xs text-neutral-500">
+              Follow-up {{ fi + 1 }}
+              <template v-if="f.response">
+                · {{ f.response.secondsUsed }}s<template v-if="f.response.via === 'voice'"> · spoken</template>
+                <span v-if="f.response.timedOut" class="text-amber-200"> · timed out</span>
+                <span v-if="f.response.leftTab" class="text-amber-200"> · left the tab</span>
+              </template>
+            </p>
+            <p class="text-neutral-100">{{ f.question }}</p>
+            <template v-if="f.response">
+              <p v-if="f.response.answer" class="whitespace-pre-wrap text-neutral-400">{{ f.response.answer }}</p>
+              <ScoreCard v-if="f.response.result" :result="f.response.result" />
+              <p v-else-if="f.response.error" class="text-sm text-red-300">Not scored: {{ f.response.error }}</p>
+              <p v-else class="muted text-sm">Scoring…</p>
+            </template>
+            <p v-else class="muted text-sm">Not answered.</p>
+          </div>
         </template>
       </article>
     </section>

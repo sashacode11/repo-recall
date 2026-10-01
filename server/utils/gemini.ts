@@ -1,4 +1,7 @@
 const MODEL = 'gemini-2.5-flash'
+
+/** A content part: text, or inline binary data such as recorded audio. */
+export type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
 
 /**
@@ -7,7 +10,8 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
  */
 export async function generateJson<T>(opts: {
   system: string
-  prompt: string
+  /** Text, or a list of parts when sending media (e.g. audio for transcription). */
+  prompt: string | GeminiPart[]
   schema: Record<string, unknown>
   temperature?: number
   /** Cap on 2.5 Flash's internal reasoning tokens. Lower is faster; 0 disables thinking. Omit for the model default. */
@@ -23,7 +27,7 @@ export async function generateJson<T>(opts: {
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: opts.system }] },
-      contents: [{ role: 'user', parts: [{ text: opts.prompt }] }],
+      contents: [{ role: 'user', parts: typeof opts.prompt === 'string' ? [{ text: opts.prompt }] : opts.prompt }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: opts.schema,

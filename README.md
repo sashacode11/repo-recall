@@ -13,7 +13,7 @@ All answers are scored 1–5 by Gemini against a strict rubric. An answer that u
 
 1. **Paste a job description.** The app pulls out the role, seniority and skills, then builds a study plan of 4–7 topics. Each topic quotes the line from the posting it comes from, explains why the role needs it, lists what an interviewer is likely to probe, and has 3–5 practice questions.
 2. **Study.** Look things up as much as you like. Every answer gets a score, feedback that teaches, the points you missed, and a model answer.
-3. **Mock interview.** 10 new questions on the same topics, one at a time, with a timer (2 minutes for easy, 3 for medium, 4 for hard). No feedback until the end. Leaving the tab is recorded.
+3. **Mock interview.** 10 new questions on the same topics, one at a time, with a timer (2 minutes for easy, 3 for medium, 4 for hard). A weak answer (3 or below) gets up to two follow-up questions that probe what was missing, 90 seconds each. No feedback until the end. Leaving the tab is recorded.
 4. **Results.** Study score vs interview score, overall and per topic.
 
 The gap between the two scores is the point:
@@ -26,15 +26,21 @@ The gap between the two scores is the point:
 
 Both stages use the same scoring rubric, so the scores are comparable. Study mode only changes the tone of the feedback.
 
+The interview score counts the 10 main questions only; follow-ups are scored and shown under their question, but study mode has none, so counting them would skew the comparison.
+
 Results are saved in your browser (localStorage), and an in-progress session survives a page reload.
+
+### Voice mode
+
+The mock interview can be done out loud. Questions are read aloud (SpeechSynthesis); you tap to start answering and tap to finish (MediaRecorder). The recording is transcribed by Gemini, and you see exactly what was heard, read-only, before moving on. There's no pause and no re-record: once recording starts, that's your answer. If the page is reloaded mid-recording, or the recording can't be transcribed, that answer is left unscored. The timer keeps running while you record. You can switch between voice and typing between questions, and if the microphone is unavailable or permission is denied, the interview falls back to typing with a message.
 
 ## Repo practice
 
 Paste a public GitHub repo URL. The app reads the README, the file tree and up to 8 key source files (entry points first, then the largest files; tests, examples, generated data and lock files are ranked last or skipped). Gemini writes 10 questions about decisions visible in that code, not framework trivia. Each answer is scored against the real source, with harsh feedback and a model answer after every question.
 
-## Answering by voice
+## Dictation while studying
 
-In browsers that support the Web Speech API (Chrome, Edge), a **Speak** button transcribes into the answer box. Elsewhere the button is hidden and typing works the same.
+In study mode and repo practice, browsers that support the Web Speech API (Chrome, Edge) show a **Speak** button that dictates into the answer box. Elsewhere the button is hidden and typing works the same. The mock interview uses Gemini transcription instead (see Voice mode).
 
 ## Setup
 
@@ -67,15 +73,24 @@ node .output/server/index.mjs
 
 ### Gemini quota
 
-The Gemini free tier allows only **20 requests per day** for `gemini-2.5-flash` (and about 5 per minute). A full job-prep session uses around 37: one to build the study plan, one per study answer, one for the mock questions and one per mock answer. On the free tier you'll run out partway through. The app shows a clear message when that happens, and unscored mock answers can be retried from the results page. Enabling billing on the API key removes the limit; Flash is inexpensive.
+The Gemini free tier allows only **20 requests per day** for `gemini-2.5-flash` (and about 5 per minute). A full job-prep session uses around 37 or more: one to build the study plan, one per study answer, one for the mock questions, and in the mock one per answer plus one per follow-up generated. Voice mode adds a transcription call per answer, so a spoken interview with follow-ups can take 30–80 calls. On the free tier you'll run out partway through. The app shows a clear message when that happens, and unscored mock answers can be retried from the results page. Enabling billing on the API key removes the limit; Flash is inexpensive.
 
 ### GitHub rate limit
 
 The repo flow uses the unauthenticated GitHub API (60 requests per hour). File contents come from `raw.githubusercontent.com`, which doesn't count against that limit, so analysing a repo costs about 3 requests.
 
+## Deploying
+
+**Do not make this app publicly accessible.** It has no login, and every request from every visitor spends the owner's Gemini quota (or money, once billing is enabled). Anyone with the URL can use it.
+
+When deploying to Vercel:
+
+- Set `GEMINI_API_KEY` in the project's Environment Variables (Settings → Environment Variables), marked Sensitive. Never commit `.env`; it is in `.gitignore` and `.vercelignore`.
+- Turn on Deployment Protection (Settings → Deployment Protection) so that **all** deployments, production included, require Vercel Authentication or a password. Vercel's default only protects preview deployments; production domains stay public.
+
 ## API
 
-All routes are `POST` with a JSON body.
+All routes are `POST`, with a JSON body unless noted.
 
 | Route | Body | Returns |
 |---|---|---|
@@ -83,6 +98,8 @@ All routes are `POST` with a JSON body.
 | `/api/mock-questions` | `{ studyPlan, roleTitle?, seniority? }` | 10 new interview questions on the same topics |
 | `/api/analyze` | `{ repoUrl }` | Repo name, 10 questions, and the code context used for scoring |
 | `/api/score` | `{ question, expectedPoints, answer, codeContext \| jobContext, mode? }` | `{ score, missing, feedback, modelAnswer }` |
+| `/api/follow-up` | `{ question, answer, missing, feedback, jobContext, previous? }` | `{ question, expectedPoints }` |
+| `/api/transcribe` | multipart: `audio` file, optional `question` and `vocabulary` text | `{ transcript, speechDetected }` |
 
 `mode` is `"interview"` (default) or `"study"`. Errors come back with a readable `statusMessage`.
 
@@ -91,11 +108,12 @@ All routes are `POST` with a JSON body.
 ```
 app/
   pages/          index (job prep), study, mock, results, repo
-  components/     AnswerBox (textarea + voice), ScoreCard, StudyQuestion
+  components/     AnswerBox (textarea + dictation), ScoreCard, StudyQuestion
+  utils/          api helpers, voice.ts (speech output, recording, mic checks)
   composables/    useJobSession: session state, stats, background scoring
   plugins/        persists the session to localStorage
 server/
-  api/            the four routes above
+  api/            the routes above
   utils/          github.ts (repo fetching and file selection), gemini.ts
 shared/types/     request and response types used by both sides
 ```

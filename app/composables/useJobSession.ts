@@ -5,13 +5,30 @@ export interface StudyRecord {
   result: ScoreResponse
 }
 
-export interface MockRecord {
+/** One answer in the mock interview, to a main question or a follow-up. */
+export interface MockResponse {
+  /** Typed text, or the Gemini transcript for a spoken answer. Empty if skipped or timed out. */
   answer: string
+  via: 'text' | 'voice'
   secondsUsed: number
   timedOut: boolean
   leftTab: boolean
   result?: ScoreResponse
+  /** Set when the answer couldn't be scored (or transcribed); it is left out of averages. */
   error?: string
+}
+
+export interface FollowUpRecord {
+  question: string
+  expectedPoints: string[]
+  response?: MockResponse
+}
+
+export interface MockRecord extends MockResponse {
+  /** Up to MAX_FOLLOW_UPS probes asked after a weak answer. Not counted in the interview score. */
+  followUps?: FollowUpRecord[]
+  /** Follow-up generation failed; the interview moves on without more follow-ups. */
+  followUpError?: string
 }
 
 export interface MockAttempt {
@@ -19,10 +36,71 @@ export interface MockAttempt {
   questions: MockQuestion[]
   answers: Record<string, MockRecord>
   current: number
-  /** When the current question was shown; the timer keeps running across reloads. */
-  questionStartedAt: number
+  /** Answer by voice (Gemini transcription) instead of typing. */
+  voice?: boolean
+  /** When the current turn's timer started; null while the question is being read out. Survives reloads. */
+  questionStartedAt: number | null
+  /** Turn key of a recording in progress. Recording commits the answer, so a reload mid-recording scores it as interrupted. */
+  recordingTurn?: string | null
   leftTabCurrent: boolean
   finishedAt?: number
+}
+
+export const MAX_FOLLOW_UPS = 2
+export const FOLLOW_UP_THRESHOLD = 3
+export const FOLLOW_UP_SECONDS = 90
+
+/** One question the candidate is (or was) answering: a main question or one of its follow-ups. */
+export interface Turn {
+  key: string
+  parent: MockQuestion
+  /** null for the main question, else the follow-up's index. */
+  followUpIndex: number | null
+  question: string
+  expectedPoints: string[]
+  limit: number
+}
+
+export type MockStage =
+  | { kind: 'answer'; turn: Turn }
+  | { kind: 'scoring'; turn: Turn; response: MockResponse }
+  | { kind: 'follow-up'; turn: Turn; response: MockResponse }
+  | { kind: 'review'; turn: Turn; response: MockResponse }
+  | { kind: 'done' }
+
+/** Where the interview is, derived purely from stored state so it resumes correctly after a reload. */
+export function mockStage(a: MockAttempt): MockStage {
+  const q = a.questions[a.current]
+  if (!q || a.finishedAt) return { kind: 'done' }
+  const parentTurn: Turn = { key: q.id, parent: q, followUpIndex: null, question: q.question, expectedPoints: q.expectedPoints, limit: timeLimit(q) }
+  const rec = a.answers[q.id]
+  if (!rec) return { kind: 'answer', turn: parentTurn }
+
+  const followUps = rec.followUps ?? []
+  const i = followUps.length - 1
+  const last = followUps[i]
+  const turn: Turn = last
+    ? { key: `${q.id}-f${i + 1}`, parent: q, followUpIndex: i, question: last.question, expectedPoints: last.expectedPoints, limit: FOLLOW_UP_SECONDS }
+    : parentTurn
+  const response = last ? last.response : rec
+  if (!response) return { kind: 'answer', turn }
+  if (!response.result && !response.error) return { kind: 'scoring', turn, response }
+  if (response.result && response.result.score <= FOLLOW_UP_THRESHOLD && followUps.length < MAX_FOLLOW_UPS && !rec.followUpError) {
+    return { kind: 'follow-up', turn, response }
+  }
+  return { kind: 'review', turn, response }
+}
+
+/** Every answer in an attempt (main and follow-up) with the question it answered. */
+export function allResponses(a: MockAttempt) {
+  return a.questions.flatMap((q) => {
+    const rec = a.answers[q.id]
+    if (!rec) return []
+    return [
+      { q, question: q.question, expectedPoints: q.expectedPoints, response: rec as MockResponse },
+      ...(rec.followUps ?? []).flatMap((f) => (f.response ? [{ q, question: f.question, expectedPoints: f.expectedPoints, response: f.response }] : [])),
+    ]
+  })
 }
 
 export interface JobSession {
@@ -160,26 +238,31 @@ export function useJobSession() {
       const s = session.value
       const attempt = s?.mock
       if (!s || !attempt) return
-      const q = attempt.questions.find((q) => attempt.answers[q.id] && !attempt.answers[q.id]!.result && !attempt.answers[q.id]!.error)
-      if (!q) return
-      const rec = attempt.answers[q.id]!
+      const next = allResponses(attempt).find(({ response }) => !response.result && !response.error)
+      if (!next) return
+      const { q, question, expectedPoints, response } = next
       try {
-        rec.result = await postScore({
-          questionId: q.id,
-          question: q.question,
-          expectedPoints: q.expectedPoints,
-          answer: rec.answer,
-          jobContext: jobContext(s, topicById.value.get(q.topicId)),
-          mode: 'interview',
-        })
+        response.result = response.answer.trim()
+          ? await postScore({
+              questionId: q.id,
+              question,
+              expectedPoints,
+              answer: response.answer,
+              jobContext: jobContext(s, topicById.value.get(q.topicId)),
+              mode: 'interview',
+            })
+          : blankScore('No answer given.')
       } catch (err) {
-        rec.error = apiError(err)
+        response.error = apiError(err)
       }
     }
   }
 
   function retryFailedMock() {
-    for (const rec of Object.values(session.value?.mock?.answers ?? {})) delete rec.error
+    const attempt = session.value?.mock
+    if (!attempt) return Promise.resolve()
+    // Only answers with text can be rescored; a failed transcription has nothing to retry.
+    for (const { response } of allResponses(attempt)) if (response.answer.trim()) delete response.error
     return scorePendingMock()
   }
 
