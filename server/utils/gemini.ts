@@ -10,6 +10,8 @@ export async function generateJson<T>(opts: {
   prompt: string
   schema: Record<string, unknown>
   temperature?: number
+  /** Cap on 2.5 Flash's internal reasoning tokens. Lower is faster; 0 disables thinking. Omit for the model default. */
+  thinkingBudget?: number
 }): Promise<T> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
@@ -26,6 +28,7 @@ export async function generateJson<T>(opts: {
         responseMimeType: 'application/json',
         responseSchema: opts.schema,
         temperature: opts.temperature ?? 0.4,
+        ...(opts.thinkingBudget !== undefined && { thinkingConfig: { thinkingBudget: opts.thinkingBudget } }),
       },
     }),
   })
@@ -40,12 +43,19 @@ export async function generateJson<T>(opts: {
   if (!res.ok) {
     const body = await res.text().catch(() => '')
     console.error(`[gemini] ${res.status}: ${body.slice(0, 500)}`)
+    if (res.status === 429) {
+      // The daily free-tier cap and the per-minute limit both return 429; only the quotaId tells them apart.
+      const daily = /PerDay/.test(body)
+      throw createError({
+        statusCode: 429,
+        statusMessage: daily
+          ? `Gemini's daily quota for ${MODEL} is used up (the free tier allows 20 requests a day). It resets at midnight Pacific time, or enable billing on the API key to lift it.`
+          : 'Gemini rate limit reached. Wait a minute and try again.',
+        data: { quota: daily ? 'daily' : 'minute' },
+      })
+    }
     const statusMessage =
-      res.status === 429
-        ? 'Gemini rate limit or quota reached. Wait a minute and try again.'
-        : res.status === 503
-          ? 'Gemini is overloaded right now. Try again shortly.'
-          : `Gemini request failed (${res.status}).`
+      res.status === 503 ? 'Gemini is overloaded right now. Try again shortly.' : `Gemini request failed (${res.status}).`
     throw createError({ statusCode: 502, statusMessage })
   }
 

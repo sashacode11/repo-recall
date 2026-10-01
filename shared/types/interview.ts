@@ -25,12 +25,69 @@ export interface AnalyzeResponse {
   files: string[]
 }
 
+// ---- Job-description flow ----
+
+export const SENIORITIES = ['intern', 'junior', 'mid', 'senior', 'staff', 'principal', 'unspecified'] as const
+export type Seniority = (typeof SENIORITIES)[number]
+
+export interface PracticeQuestion {
+  id: string
+  question: string
+  difficulty: Difficulty
+  expectedPoints: string[]
+}
+
+export interface StudyTopic {
+  id: string
+  topic: string
+  /** Short quote from the posting that this topic is based on. */
+  fromPosting: string
+  whyItMatters: string
+  whatTheyProbe: string[]
+  questions: PracticeQuestion[]
+}
+
+export interface JobAnalyzeRequest {
+  jobDescription: string
+}
+
+export interface JobAnalyzeResponse {
+  roleTitle: string
+  seniority: Seniority
+  requiredSkills: string[]
+  focusAreas: string[]
+  studyPlan: StudyTopic[]
+}
+
+export interface MockQuestionsRequest {
+  studyPlan: StudyTopic[]
+  roleTitle?: string
+  seniority?: Seniority
+}
+
+export interface MockQuestion extends PracticeQuestion {
+  topicId: string
+}
+
+export interface MockQuestionsResponse {
+  questions: MockQuestion[]
+}
+
+// ---- Scoring (shared by both flows) ----
+
+export type ScoreMode = 'study' | 'interview'
+
 export interface ScoreRequest {
   questionId: string
   question: string
   expectedPoints: string[]
   answer: string
-  codeContext: string
+  /** Repo flow: source code is the ground truth. */
+  codeContext?: string
+  /** Job flow: role, topic and posting the question was drawn from. */
+  jobContext?: string
+  /** 'study' gives teaching-oriented feedback; scores use the same rubric either way. Default 'interview'. */
+  mode?: ScoreMode
 }
 
 export interface ScoreResponse {

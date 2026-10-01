@@ -8,4 +8,29 @@ html {
 
 body {
   @apply bg-neutral-950 text-neutral-200 leading-relaxed antialiased;
+  overflow-wrap: anywhere;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply btn bg-neutral-100 text-neutral-900 hover:bg-white;
+  }
+  .btn-ghost {
+    @apply btn border border-neutral-700 text-neutral-200 hover:border-neutral-500 hover:bg-neutral-900;
+  }
+  .field {
+    @apply w-full rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 leading-relaxed text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-500 focus:outline-none;
+  }
+  .muted {
+    @apply text-neutral-400;
+  }
+  .label {
+    @apply text-xs font-medium uppercase tracking-wide text-neutral-500;
+  }
+  .error {
+    @apply rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-200;
+  }
 }
